@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.*
+!.env.example
+# Реальные реквизиты/секреты — не в публичный репозиторий
+recipient.json
+data/
+*.local
+*.log
+/tmp/
+.DS_Store

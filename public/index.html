@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HR-бот · Настройка</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🤖 HR-бот <span class="muted">для открытых линий</span></div>
+  <div id="who" class="who muted"></div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="dashboard" class="active">Дашборд</button>
+  <button data-tab="vacancies">Вакансии</button>
+  <button data-tab="prompts">Промпты</button>
+  <button data-tab="candidates">Соискатели</button>
+  <button data-tab="usage">Токены</button>
+  <button data-tab="billing">Баланс</button>
+  <button data-tab="settings">Настройки</button>
+</nav>
+
+<main id="view"><div class="loading">Загрузка…</div></main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

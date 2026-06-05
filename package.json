@@ -1,0 +1,19 @@
+{
+  "name": "hr-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "HR-бот для открытых линий Битрикс24: общение с соискателями, подбор вакансий, сбор первичной информации в CRM. Админ-приложение для настройки.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "pdfkit": "^0.15.0",
+    "qrcode": "^1.5.3"
+  }
+}
