@@ -31,9 +31,12 @@ try {
 } catch { VIBE_SESSION = window.__VIBE_SESSION || ''; }
 
 // ───────── API helper ─────────
+function adminPass() { try { return sessionStorage.getItem('admin_pass') || ''; } catch { return ''; } }
 async function api(method, path, body) {
   const opts = { method, credentials: 'include', headers: {} };
   if (VIBE_SESSION) opts.headers['X-App-Session'] = 'Bearer ' + VIBE_SESSION;
+  const ap = adminPass();
+  if (ap) opts.headers['X-Admin-Pass'] = ap;
   if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const res = await fetch('/api' + path, opts);
   if (res.status === 401) { throw { auth: true, message: 'Не авторизовано. Откройте приложение внутри Битрикс24.' }; }
@@ -628,6 +631,17 @@ registerTab('billing', async () => {
             <button class="btn danger sm" onclick="cancelInv(${i.id})">Отмена</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
 
+    ${s.isAdmin ? `<div class="card"><h3>Оплаты T-Bank</h3>
+      <p class="hint">Оплаченные счета зачисляются автоматически (сверка выписки по сумме + ИНН плательщика каждые ~10 мин). Если платёж не подхватился — проверьте вручную.</p>
+      <p>Сверка: ${s.tbank && s.tbank.configured
+          ? (s.tbank.lastRun && s.tbank.lastRun.at
+              ? `последняя ${new Date(s.tbank.lastRun.at).toLocaleString('ru')} — входящих ${s.tbank.lastRun.scanned||0}, оплачено ${s.tbank.lastRun.matched||0}${s.tbank.lastRun.errors && s.tbank.lastRun.errors.length ? ' <span class="pill warn">ошибки</span>' : ' <span class="pill on">ок</span>'}`
+              : 'ещё не запускалась')
+          : '<span class="pill off">прокси не настроен</span>'}
+        ${s.tbank && s.tbank.lastRun && s.tbank.lastRun.errors && s.tbank.lastRun.errors.length ? `<div class="hint">${s.tbank.lastRun.errors.map(esc).join('<br>')}</div>` : ''}</p>
+      <button class="btn ok" id="t_check">🔄 Проверить оплаты сейчас</button>
+    </div>` : ''}
+
     <div class="card"><h3>Выписка по балансу</h3>
       ${s.transactions.length ? `<table><thead><tr><th>Дата</th><th>Операция</th><th>Токены</th><th>Остаток</th></tr></thead><tbody>
       ${s.transactions.map(t => `<tr>
@@ -643,6 +657,14 @@ registerTab('billing', async () => {
     </div>`;
 
   if (s.isAdmin) {
+    const tbtn = $('#t_check');
+    if (tbtn) tbtn.onclick = async () => {
+      tbtn.disabled = true; toast('Проверяю выписку T-Bank…');
+      try { const { result } = await api('POST', '/billing/check-payments', {});
+        toast(result.ok ? `Готово: входящих ${result.scanned}, оплачено счетов ${result.matched}` : 'Ошибка: ' + (result.errors[0] || ''), !result.ok);
+        openTab('billing');
+      } catch (e) { toast(e.message, true); tbtn.disabled = false; }
+    };
     // Двусторонний пересчёт токены ↔ рубли по тарифу.
     const price = Number(s.pricePer1k || 0);
     const tokEl = $('#i_tokens'), amtEl = $('#i_amount');
@@ -837,12 +859,40 @@ function startHeartbeat() {
   document.addEventListener('click', () => renewSession());     // любой клик (троттлинг внутри)
 }
 
+// ───────── Вход в админ-часть по паролю (кнопка в углу) ─────────
+function updateAdminBtn(isAdmin) {
+  const b = document.getElementById('adminBtn');
+  if (!b) return;
+  if (adminPass() || isAdmin) { b.textContent = '🔓 Админ'; b.title = 'Админ-режим активен (выйти)'; }
+  else { b.textContent = '🔒 Админ'; b.title = 'Войти в админ-часть по паролю'; }
+}
+function initAdminButton() {
+  const b = document.getElementById('adminBtn');
+  if (!b) return;
+  b.onclick = async () => {
+    if (adminPass()) { // выйти из админ-режима
+      sessionStorage.removeItem('admin_pass'); updateAdminBtn(false); toast('Вышли из админ-режима'); openTab('billing'); return;
+    }
+    const pass = prompt('Пароль для входа в админ-часть:');
+    if (!pass) return;
+    try {
+      sessionStorage.setItem('admin_pass', pass);
+      await api('POST', '/admin-login', { password: pass });
+      updateAdminBtn(true); toast('Админ-режим включён'); openTab('billing');
+    } catch (e) { sessionStorage.removeItem('admin_pass'); toast(e.message || 'Неверный пароль', true); }
+  };
+}
+
 // ───────── boot ─────────
 (async function boot() {
+  let isAdmin = false;
   try {
-    const { user } = await api('GET', '/me');
+    const me = await api('GET', '/me');
+    const user = me.user; isAdmin = me.isAdmin;
     $('#who').textContent = user && (user.name || user.id) ? ('👤 ' + (user.name || user.id)) : '';
   } catch (e) { /* покажет баннер при открытии вкладки */ }
+  initAdminButton();
+  updateAdminBtn(isAdmin);
   openTab('dashboard');
   startHeartbeat();
 })();

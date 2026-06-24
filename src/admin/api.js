@@ -7,6 +7,7 @@ import { fetchAvitoItemDescription } from '../avito/parser.js';
 import { vibeGet, vibePost } from '../vibe.js';
 import { config } from '../config.js';
 import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer } from '../billing.js';
+import { runTbankSync, getTbankStatus } from '../billing/tbank.js';
 
 export const adminRouter = Router();
 adminRouter.use(authMiddleware);
@@ -20,6 +21,8 @@ const wrap = (fn) => (req, res) => fn(req, res).catch((e) => {
 function isAdminReq(req) {
   const u = req.user || {};
   if (u.viaToken) return true;
+  // Пароль админ-части (кнопка в углу): заголовок X-Admin-Pass.
+  if (config.adminPanelPassword && req.get('x-admin-pass') === config.adminPanelPassword) return true;
   const id = String(u.id ?? u.userId ?? u.ID ?? '');
   return id === String(config.adminUserId);
 }
@@ -31,6 +34,13 @@ function requireAdmin(req, res, next) {
 // ── Текущий пользователь ──
 adminRouter.get('/me', wrap(async (req, res) => {
   res.json({ user: req.user, isAdmin: isAdminReq(req) });
+}));
+
+// ── Вход в админ-часть по паролю (кнопка в углу) ──
+adminRouter.post('/admin-login', wrap(async (req, res) => {
+  if (!config.adminPanelPassword) return res.status(400).json({ error: 'Пароль админ-части не настроен' });
+  if ((req.body?.password || '') === config.adminPanelPassword) return res.json({ ok: true });
+  res.status(403).json({ error: 'Неверный пароль' });
 }));
 
 // ── Настройки ──
@@ -292,8 +302,17 @@ adminRouter.post('/placement/unbind', wrap(async (req, res) => {
 adminRouter.get('/billing/state', wrap(async (req, res) => {
   const state = await getBillingState();
   state.isAdmin = isAdminReq(req);
-  // Не-админу не отдаём админ-детали (но баланс/выписку/счета — можно).
+  state.tbank = getTbankStatus();
   res.json(state);
+}));
+
+// ── T-Bank: статус сверки и ручная проверка оплат (если авто не прошло) ──
+adminRouter.get('/billing/tbank-status', wrap(async (req, res) => {
+  res.json(getTbankStatus());
+}));
+adminRouter.post('/billing/check-payments', requireAdmin, wrap(async (req, res) => {
+  const result = await runTbankSync({ lookbackDays: Number(req.body?.lookbackDays) || 14 });
+  res.json({ ok: true, result });
 }));
 adminRouter.post('/billing/topup', requireAdmin, wrap(async (req, res) => {
   const tokens = Number(req.body?.tokens);

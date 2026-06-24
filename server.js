@@ -9,6 +9,7 @@ import { startPoller, setBotId } from './src/bot/poller.js';
 import { query } from './src/db.js';
 import { startAvitoScheduler } from './src/avito/scheduler.js';
 import { startHHScheduler } from './src/hh/scheduler.js';
+import { startTbankScheduler } from './src/billing/tbank.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -74,6 +75,7 @@ async function main() {
   startPoller();
   startAvitoScheduler();
   startHHScheduler();
+  startTbankScheduler();
 }
 
 main().catch((e) => {

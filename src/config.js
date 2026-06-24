@@ -31,6 +31,17 @@ export const config = {
   avitoClientId: process.env.AVITO_CLIENT_ID || '',
   avitoClientSecret: process.env.AVITO_CLIENT_SECRET || '',
 
+  // T-Bank: сверка оплат через прокси-прослойку (migrator.lidkom.ru/tbank).
+  // Нашему приложению нужен только URL прокси + общий секрет + номер счёта;
+  // сам TBANK_TOKEN держит прокси.
+  tbankProxyUrl: process.env.TBANK_PROXY_URL || '',
+  tbankProxySecret: process.env.TBANK_PROXY_SECRET || '',
+  tbankAccount: process.env.TBANK_ACCOUNT || '',
+  tbankPollIntervalMs: Number(process.env.TBANK_POLL_INTERVAL_MS || 10 * 60 * 1000),
+
+  // Пароль для входа в админ-часть приложения (кнопка в углу).
+  adminPanelPassword: process.env.ADMIN_PANEL_PASSWORD || '',
+
   // Интервал опроса событий бота, мс
   botPollIntervalMs: Number(process.env.BOT_POLL_INTERVAL_MS || 3000),
 

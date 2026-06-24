@@ -173,6 +173,20 @@ export async function listInvoices() {
   return rows;
 }
 
+// Найти неоплаченный счёт по сумме и ИНН плательщика (для авто-сверки оплат T-Bank).
+export async function findPendingByAmountAndInn(amountRub, payerInn) {
+  const inn = String(payerInn || '').replace(/\D/g, '');
+  const amount = Math.round(Number(amountRub) * 100) / 100;
+  // Сначала точное совпадение по ИНН+сумме, иначе — только по сумме (если ИНН пуст).
+  let r = await query(
+    `SELECT * FROM invoices WHERE status='issued' AND ROUND(amount_rub,2)=$1
+       AND ($2='' OR payer_inn=$2) ORDER BY created_at ASC LIMIT 1`,
+    [amount, inn]
+  );
+  if (r.rows[0]) return r.rows[0];
+  return null;
+}
+
 export async function setBillingSettings({ token_price_rub, block_on_zero }) {
   const sets = [];
   const vals = [];

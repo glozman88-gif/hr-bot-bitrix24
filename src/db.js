@@ -176,6 +176,16 @@ CREATE TABLE IF NOT EXISTS processed_events (
   processed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Обработанные входящие банковские операции (T-Bank) — дедуп при авто-сверке оплат.
+CREATE TABLE IF NOT EXISTS bank_ops_processed (
+  operation_id TEXT PRIMARY KEY,
+  invoice_id   INT,
+  amount_rub   NUMERIC(12,2),
+  payer_inn    TEXT,
+  matched      BOOLEAN NOT NULL DEFAULT FALSE,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Курсор polling-а бота (на случай, если хотим хранить локально).
 CREATE TABLE IF NOT EXISTS job_positions (
   id          SERIAL PRIMARY KEY,
@@ -215,6 +225,12 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS is_promised BOOLEAN NOT NULL DEFAU
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS hh_employer_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS hh_client_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS hh_client_secret TEXT NOT NULL DEFAULT '';
+-- Недостающая колонка, которую читает conversation.js (иначе подбор позиций падает)
+ALTER TABLE job_positions ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+-- Недостающие колонки анкеты (их пишет conversation.js — иначе сохранение анкеты падает)
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS age TEXT;
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS citizenship TEXT;
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS work_duration TEXT;
 `;
 
 export async function migrate() {
