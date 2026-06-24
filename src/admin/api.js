@@ -6,7 +6,7 @@ import { runHHSync, getLastHHRun } from '../hh/scheduler.js';
 import { fetchAvitoItemDescription } from '../avito/parser.js';
 import { vibeGet, vibePost } from '../vibe.js';
 import { config } from '../config.js';
-import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer } from '../billing.js';
+import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer, getTransactionsFiltered } from '../billing.js';
 import { runTbankSync, getTbankStatus } from '../billing/tbank.js';
 
 export const adminRouter = Router();
@@ -317,8 +317,16 @@ adminRouter.post('/billing/check-payments', requireAdmin, wrap(async (req, res) 
 adminRouter.post('/billing/topup', requireAdmin, wrap(async (req, res) => {
   const tokens = Number(req.body?.tokens);
   if (!tokens) return res.status(400).json({ error: 'Укажите количество токенов' });
-  const balance = await topupTokens(tokens, req.body?.note || 'Ручное пополнение');
+  // Клиенту показываем как пополнение от ИП Глозман (без актов).
+  const balance = await topupTokens(tokens, 'Пополнение баланса (ИП Глозман Е. М.)');
   res.json({ ok: true, balance });
+}));
+
+// Выписка по балансу с фильтрами (тип + период).
+adminRouter.get('/billing/transactions', wrap(async (req, res) => {
+  const { direction, from, to } = req.query;
+  const rows = await getTransactionsFiltered({ direction: direction || 'all', from: from || null, to: to || null });
+  res.json({ transactions: rows });
 }));
 adminRouter.post('/billing/invoice', requireAdmin, wrap(async (req, res) => {
   const { tokens, amountRub, note, payerName, payerInn, isPromised } = req.body || {};

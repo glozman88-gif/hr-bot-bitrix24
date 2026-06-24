@@ -168,6 +168,23 @@ export async function listTransactions(limit = 100) {
   return rows;
 }
 
+// Выписка с фильтрами: direction (credit|debit|all), период (from/to ISO-даты).
+export async function getTransactionsFiltered({ direction = 'all', from = null, to = null, limit = 500 } = {}) {
+  const where = [];
+  const vals = [];
+  let i = 1;
+  if (direction === 'credit') where.push('tokens > 0');
+  else if (direction === 'debit') where.push('tokens < 0');
+  if (from) { where.push(`created_at >= $${i++}`); vals.push(from); }
+  if (to) { where.push(`created_at < ($${i++}::date + INTERVAL '1 day')`); vals.push(to); }
+  vals.push(limit);
+  const sql = `SELECT * FROM billing_transactions
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY created_at DESC LIMIT $${i}`;
+  const { rows } = await query(sql, vals);
+  return rows;
+}
+
 export async function listInvoices() {
   const { rows } = await query('SELECT * FROM invoices ORDER BY created_at DESC LIMIT 200');
   return rows;

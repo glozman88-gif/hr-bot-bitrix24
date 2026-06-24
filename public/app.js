@@ -592,8 +592,14 @@ const invStatus = { issued: '<span class="pill warn">ожидает оплаты
 registerTab('billing', async () => {
   const s = await api('GET', '/billing/state');
   const r = s.recipient || {};
+  const adminMode = !!adminPass();          // админ-часть включается только по паролю (кнопка в углу)
   const lowBalance = s.balanceTokens <= 0;
   view().innerHTML = `
+    <div class="banner ${adminMode ? 'warn' : ''}" style="${adminMode ? '' : 'background:#eef5ff;color:#1b4f8a;border:1px solid #cfe0f5'}">
+      ${adminMode ? '🔧 <b>Админ-часть</b> — управление счетами, оплатами и пополнением. Нажмите «🔓 Админ» вверху, чтобы вернуться в кабинет клиента.'
+                  : '👤 <b>Кабинет клиента</b> — баланс, счета и выписка. Управление — в админ-части (кнопка «🔒 Админ» вверху).'}
+    </div>
+
     <div class="row">
       <div class="card accent" style="flex:1;min-width:240px">
         <h3>Текущий баланс</h3>
@@ -605,7 +611,16 @@ registerTab('billing', async () => {
       </div>
     </div>
 
-    ${s.isAdmin ? `
+    ${adminMode ? `
+    <div class="card">
+      <h3>Ручное пополнение баланса</h3>
+      <p class="hint">Зачислить токены вручную. В выписке у клиента отобразится как «Пополнение баланса (ИП Глозман Е. М.)» — без акта.</p>
+      <div class="row">
+        <div style="flex:1;min-width:160px"><label>Токенов</label><input type="number" id="m_tokens" placeholder="например 1000000"></div>
+        <div style="align-self:end"><button class="btn ok" id="m_topup">＋ Пополнить</button></div>
+      </div>
+    </div>
+
     <div class="card">
       <h3>Выставить счёт</h3>
       <p class="hint">Введите токены — сумма посчитается по тарифу (${s.pricePer1k ? fmtRub(s.pricePer1k) + '/1000 токенов' : 'тариф не задан'}); или введите сумму — посчитаются токены. Юр.лицо и ИНН обязательны.</p>
@@ -627,11 +642,11 @@ registerTab('billing', async () => {
         <td>${fmtNum(i.tokens)}</td><td>${fmtRub(i.amount_rub)}</td>
         <td class="nowrap">${new Date(i.created_at).toLocaleDateString('ru')}</td>
         <td class="nowrap"><button class="btn sec sm" onclick="invoicePdf(${i.id})">📄 Счёт PDF</button>
-            ${s.isAdmin ? `<button class="btn ok sm" onclick="payInv(${i.id})">Оплачен</button>
+            ${adminMode ? `<button class="btn ok sm" onclick="payInv(${i.id})">Оплачен</button>
             <button class="btn danger sm" onclick="cancelInv(${i.id})">Отмена</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
 
-    ${s.isAdmin ? `<div class="card"><h3>Оплаты T-Bank</h3>
+    ${adminMode ? `<div class="card"><h3>Оплаты T-Bank</h3>
       <p class="hint">Оплаченные счета зачисляются автоматически (сверка выписки по сумме + ИНН плательщика каждые ~10 мин). Если платёж не подхватился — проверьте вручную.</p>
       <p>Сверка: ${s.tbank && s.tbank.configured
           ? (s.tbank.lastRun && s.tbank.lastRun.at
@@ -643,20 +658,44 @@ registerTab('billing', async () => {
     </div>` : ''}
 
     <div class="card"><h3>Выписка по балансу</h3>
-      ${s.transactions.length ? `<table><thead><tr><th>Дата</th><th>Операция</th><th>Токены</th><th>Остаток</th></tr></thead><tbody>
-      ${s.transactions.map(t => `<tr>
-        <td class="nowrap">${new Date(t.created_at).toLocaleString('ru')}</td>
-        <td>${txnKind[t.kind] || t.kind}</td>
-        <td style="color:${t.tokens < 0 ? 'var(--danger)' : 'var(--ok)'}">${t.tokens > 0 ? '+' : ''}${fmtNum(t.tokens)}</td>
-        <td>${fmtNum(t.balance_after)}</td>
-      </tr>`).join('')}</tbody></table>` : '<p class="muted">Операций пока нет.</p>'}
+      <div class="toolbar">
+        <select id="f_dir">
+          <option value="all">Все операции</option>
+          <option value="credit">Только пополнения</option>
+          <option value="debit">Только списания</option>
+        </select>
+        <label class="hint">с <input type="date" id="f_from" style="width:auto"></label>
+        <label class="hint">по <input type="date" id="f_to" style="width:auto"></label>
+        <button class="btn sec sm" id="f_apply">Показать</button>
+      </div>
+      <div id="txn_box"><p class="muted">Загрузка…</p></div>
     </div>
 
     <div class="card"><h3>Реквизиты получателя</h3>
       <div class="desc">${[r.shortName, r.fullName, r.inn ? 'ИНН ' + r.inn : '', r.bankName, r.bik ? 'БИК ' + r.bik : '', r.bankAccount ? 'Р/с ' + r.bankAccount : '', r.corrAccount ? 'К/с ' + r.corrAccount : '', r.purpose].filter(Boolean).map(esc).join('<br>')}</div>
     </div>`;
 
-  if (s.isAdmin) {
+  // Выписка с фильтрами
+  async function loadTxns() {
+    const dir = $('#f_dir').value, from = $('#f_from').value, to = $('#f_to').value;
+    const qs = new URLSearchParams({ direction: dir });
+    if (from) qs.set('from', from); if (to) qs.set('to', to);
+    try {
+      const { transactions } = await api('GET', '/billing/transactions?' + qs.toString());
+      $('#txn_box').innerHTML = renderTxns(transactions);
+    } catch (e) { $('#txn_box').innerHTML = `<p class="banner err">${esc(e.message)}</p>`; }
+  }
+  $('#f_apply').onclick = loadTxns;
+  $('#f_dir').onchange = loadTxns;
+  await loadTxns();
+
+  if (adminMode) {
+    const mt = $('#m_topup');
+    if (mt) mt.onclick = async () => {
+      const tokens = Number($('#m_tokens').value);
+      if (!tokens) return toast('Укажите токены', true);
+      try { await api('POST', '/billing/topup', { tokens }); toast('Баланс пополнен'); openTab('billing'); } catch (e) { toast(e.message, true); }
+    };
     const tbtn = $('#t_check');
     if (tbtn) tbtn.onclick = async () => {
       tbtn.disabled = true; toast('Проверяю выписку T-Bank…');
@@ -665,22 +704,11 @@ registerTab('billing', async () => {
         openTab('billing');
       } catch (e) { toast(e.message, true); tbtn.disabled = false; }
     };
-    // Двусторонний пересчёт токены ↔ рубли по тарифу.
     const price = Number(s.pricePer1k || 0);
     const tokEl = $('#i_tokens'), amtEl = $('#i_amount');
     let syncing = false;
-    tokEl.oninput = () => {
-      if (syncing || !price) return; syncing = true;
-      const t = Number(tokEl.value) || 0;
-      amtEl.value = t ? (Math.round((t / 1000) * price * 100) / 100) : '';
-      syncing = false;
-    };
-    amtEl.oninput = () => {
-      if (syncing || !price) return; syncing = true;
-      const a = Number(amtEl.value) || 0;
-      tokEl.value = a ? Math.round((a / price) * 1000) : '';
-      syncing = false;
-    };
+    tokEl.oninput = () => { if (syncing || !price) return; syncing = true; const t = Number(tokEl.value) || 0; amtEl.value = t ? (Math.round((t / 1000) * price * 100) / 100) : ''; syncing = false; };
+    amtEl.oninput = () => { if (syncing || !price) return; syncing = true; const a = Number(amtEl.value) || 0; tokEl.value = a ? Math.round((a / price) * 1000) : ''; syncing = false; };
     $('#i_create').onclick = async () => {
       const tokens = Number(tokEl.value) || 0;
       const amountRub = Number(amtEl.value) || null;
@@ -695,6 +723,33 @@ registerTab('billing', async () => {
     };
   }
 });
+
+// Рендер выписки: списания показывают диалог и ссылку на него.
+function renderTxns(txns) {
+  if (!txns || !txns.length) return '<p class="muted">Операций по фильтру нет.</p>';
+  return `<table><thead><tr><th>Дата</th><th>Операция</th><th>Детали</th><th>Токены</th><th>Остаток</th></tr></thead><tbody>
+    ${txns.map(t => {
+      const dlg = t.dialog_id ? `по диалогу <a href="#" onclick="billingDialog('${esc(t.dialog_id)}');return false">${esc(t.dialog_id)}</a>` : esc(t.description || '');
+      return `<tr>
+        <td class="nowrap">${new Date(t.created_at).toLocaleString('ru')}</td>
+        <td>${txnKind[t.kind] || t.kind}</td>
+        <td>${dlg}</td>
+        <td style="color:${t.tokens < 0 ? 'var(--danger)' : 'var(--ok)'}">${t.tokens > 0 ? '+' : ''}${fmtNum(t.tokens)}</td>
+        <td>${fmtNum(t.balance_after)}</td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+// Открыть переписку диалога (по ссылке из выписки списаний).
+async function billingDialog(dialogId) {
+  try {
+    const { messages } = await api('GET', '/candidates/' + encodeURIComponent(dialogId) + '/messages');
+    modal(`<h3>Диалог ${esc(dialogId)}</h3>
+      <p><a href="https://gkfs.bitrix24.ru/online/?IM_DIALOG=${encodeURIComponent(dialogId)}" target="_blank" rel="noopener">Открыть в Битрикс24 ↗</a></p>
+      <div class="desc">${(messages||[]).map(m => `<p><b>${m.role === 'user' ? 'Соискатель' : 'Бот'}:</b> ${esc(m.text)}</p>`).join('') || '<span class="muted">сообщений нет</span>'}</div>
+      <div class="row" style="margin-top:12px"><button class="btn sec" onclick="closeModal()">Закрыть</button></div>`);
+  } catch (e) { toast(e.message, true); }
+}
+window.billingDialog = billingDialog;
 // Скачать PDF счёта (через fetch с заголовком сессии → blob).
 async function invoicePdf(id) {
   try {
