@@ -619,11 +619,11 @@ registerTab('billing', async () => {
         <div style="flex:1;min-width:160px"><label>Токенов</label><input type="number" id="m_tokens" placeholder="например 1000000"></div>
         <div style="align-self:end"><button class="btn ok" id="m_topup">＋ Пополнить</button></div>
       </div>
-    </div>
+    </div>` : ''}
 
     <div class="card">
-      <h3>Выставить счёт</h3>
-      <p class="hint">Введите токены — сумма посчитается по тарифу (${s.pricePer1k ? fmtRub(s.pricePer1k) + '/1000 токенов' : 'тариф не задан'}); или введите сумму — посчитаются токены. Юр.лицо и ИНН обязательны.</p>
+      <h3>Пополнить баланс — выставить счёт</h3>
+      <p class="hint">Введите токены — сумма посчитается по тарифу (${s.pricePer1k ? fmtRub(s.pricePer1k) + '/1000 токенов' : 'тариф не задан'}); или введите сумму — посчитаются токены. Юр.лицо и ИНН обязательны. Счёт скачивается PDF и оплачивается по реквизитам — зачисление автоматическое.</p>
       <div class="row">
         <div style="flex:1;min-width:130px"><label>Токенов</label><input type="number" id="i_tokens" placeholder="1000000"></div>
         <div style="flex:1;min-width:120px"><label>Сумма, ₽</label><input type="number" step="0.01" id="i_amount" placeholder="по тарифу"></div>
@@ -634,7 +634,7 @@ registerTab('billing', async () => {
         Обещанный платёж — зачислить токены на баланс <b>сразу</b> (до оплаты), не более ${fmtRub(s.promisedMaxRub)}</label>
       ${s.hasOutstandingPromised ? '<p class="hint" style="color:var(--warn)">Уже есть неоплаченный обещанный платёж — новый можно выписать только после его оплаты.</p>' : ''}
       <div class="row" style="margin-top:8px"><button class="btn" id="i_create">Выставить счёт</button></div>
-    </div>` : ''}
+    </div>
 
     ${s.pending.length ? `<div class="card"><h3>Счета к оплате (${s.pending.length})</h3>
       <table><thead><tr><th>№</th><th>Плательщик</th><th>Токенов</th><th>Сумма</th><th>Создан</th><th></th></tr></thead><tbody>
@@ -702,6 +702,31 @@ registerTab('billing', async () => {
   $('#f_dir').onchange = loadTxns;
   await loadTxns();
 
+  // Форма выставления счёта доступна всем (клиент + админ).
+  {
+    const price = Number(s.pricePer1k || 0);
+    const tokEl = $('#i_tokens'), amtEl = $('#i_amount');
+    let syncing = false;
+    if (tokEl && amtEl) {
+      tokEl.oninput = () => { if (syncing || !price) return; syncing = true; const t = Number(tokEl.value) || 0; amtEl.value = t ? (Math.round((t / 1000) * price * 100) / 100) : ''; syncing = false; };
+      amtEl.oninput = () => { if (syncing || !price) return; syncing = true; const a = Number(amtEl.value) || 0; tokEl.value = a ? Math.round((a / price) * 1000) : ''; syncing = false; };
+    }
+    const ic = $('#i_create');
+    if (ic) ic.onclick = async () => {
+      const tokens = Number(tokEl.value) || 0;
+      const amountRub = Number(amtEl.value) || null;
+      const payerName = $('#i_payer').value.trim();
+      const innClean = $('#i_inn').value.replace(/\D/g, '');
+      const isPromised = $('#i_promised').checked;
+      if (!tokens && !amountRub) return toast('Укажите токены или сумму', true);
+      if (!payerName) return toast('Укажите юр.лицо (плательщика)', true);
+      if (innClean.length !== 10 && innClean.length !== 12) return toast('ИНН должен быть 10 или 12 цифр', true);
+      if (isPromised && amountRub && amountRub > s.promisedMaxRub) return toast(`Обещанный платёж не больше ${fmtRub(s.promisedMaxRub)}`, true);
+      try { await api('POST', '/billing/invoice', { tokens, amountRub, payerName, payerInn: innClean, isPromised }); toast(isPromised ? 'Обещанный платёж выписан, баланс пополнен' : 'Счёт выставлен — скачайте PDF и оплатите'); openTab('billing'); } catch (e) { toast(e.message, true); }
+    };
+  }
+
+  // Админ-действия (ручное пополнение, проверка оплат T-Bank).
   if (adminMode) {
     const mt = $('#m_topup');
     if (mt) mt.onclick = async () => {
@@ -716,23 +741,6 @@ registerTab('billing', async () => {
         toast(result.ok ? `Готово: входящих ${result.scanned}, оплачено счетов ${result.matched}` : 'Ошибка: ' + (result.errors[0] || ''), !result.ok);
         openTab('billing');
       } catch (e) { toast(e.message, true); tbtn.disabled = false; }
-    };
-    const price = Number(s.pricePer1k || 0);
-    const tokEl = $('#i_tokens'), amtEl = $('#i_amount');
-    let syncing = false;
-    tokEl.oninput = () => { if (syncing || !price) return; syncing = true; const t = Number(tokEl.value) || 0; amtEl.value = t ? (Math.round((t / 1000) * price * 100) / 100) : ''; syncing = false; };
-    amtEl.oninput = () => { if (syncing || !price) return; syncing = true; const a = Number(amtEl.value) || 0; tokEl.value = a ? Math.round((a / price) * 1000) : ''; syncing = false; };
-    $('#i_create').onclick = async () => {
-      const tokens = Number(tokEl.value) || 0;
-      const amountRub = Number(amtEl.value) || null;
-      const payerName = $('#i_payer').value.trim();
-      const innClean = $('#i_inn').value.replace(/\D/g, '');
-      const isPromised = $('#i_promised').checked;
-      if (!tokens && !amountRub) return toast('Укажите токены или сумму', true);
-      if (!payerName) return toast('Укажите юр.лицо (плательщика)', true);
-      if (innClean.length !== 10 && innClean.length !== 12) return toast('ИНН должен быть 10 или 12 цифр', true);
-      if (isPromised && amountRub && amountRub > s.promisedMaxRub) return toast(`Обещанный платёж не больше ${fmtRub(s.promisedMaxRub)}`, true);
-      try { await api('POST', '/billing/invoice', { tokens, amountRub, payerName, payerInn: innClean, isPromised }); toast(isPromised ? 'Обещанный платёж выписан, баланс пополнен' : 'Счёт выставлен'); openTab('billing'); } catch (e) { toast(e.message, true); }
     };
   }
 });

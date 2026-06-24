@@ -328,7 +328,8 @@ adminRouter.get('/billing/transactions', wrap(async (req, res) => {
   const rows = await getTransactionsFiltered({ direction: direction || 'all', from: from || null, to: to || null });
   res.json({ transactions: rows });
 }));
-adminRouter.post('/billing/invoice', requireAdmin, wrap(async (req, res) => {
+// Выставить счёт может и клиент (в т.ч. обещанный платёж). Ограничения обещанного — в createInvoice.
+adminRouter.post('/billing/invoice', wrap(async (req, res) => {
   const { tokens, amountRub, note, payerName, payerInn, isPromised } = req.body || {};
   if (!Number(tokens) && !Number(amountRub)) return res.status(400).json({ error: 'Укажите токены или сумму' });
   if (!payerName || !String(payerName).trim()) return res.status(400).json({ error: 'Укажите юридическое лицо (плательщика)' });

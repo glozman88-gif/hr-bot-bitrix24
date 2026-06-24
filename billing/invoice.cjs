@@ -141,7 +141,7 @@ async function generateInvoicePdf({ recipient, invoice }) {
       cx = left;
       const cells = [
         ['1',                                                                                colW.idx,   'center'],
-        ['Пополнение Баланса токенов HR-бота (ИИ-ассистент подбора персонала в открытых линиях Битрикс24)', colW.name, 'left'],
+        ['Услуги по поддержке работы приложения', colW.name, 'left'],
         ['1',                                                                                colW.qty,   'center'],
         [totalSum,                                                                           colW.price, 'right'],
         [totalSum,                                                                           colW.sum,   'right'],
