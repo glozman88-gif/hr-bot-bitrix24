@@ -1,3 +1,23 @@
+// ─── Тема (светлая / тёмная) ──────────────────────────────────────────
+(function initTheme() {
+  const saved = localStorage.getItem('theme') || 'light';
+  document.documentElement.setAttribute('data-theme', saved);
+  const updateBtn = () => {
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    updateBtn();
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.onclick = () => {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateBtn();
+    };
+  });
+})();
+
 'use strict';
 
 // ───────── Сессия ─────────
@@ -60,7 +80,6 @@ registerTab('dashboard', async () => {
   view().innerHTML = `
     <div class="stat-grid">
       <div class="stat"><div class="n">${stats.vacancies.active}</div><div class="l">активных вакансий</div></div>
-      <div class="stat"><div class="n">${stats.vacancies.offered}</div><div class="l">предлагаются ботом</div></div>
       <div class="stat"><div class="n">${stats.candidates}</div><div class="l">соискателей</div></div>
       <div class="stat"><div class="n">${stats.dialogs}</div><div class="l">диалогов</div></div>
     </div>
@@ -75,7 +94,7 @@ registerTab('dashboard', async () => {
 });
 
 // ───────── Vacancies ─────────
-registerTab('vacancies', async () => {
+registerTab('_vacancies_disabled', async () => {
   view().innerHTML = `
     <div class="card">
       <div class="toolbar">
@@ -97,9 +116,9 @@ registerTab('vacancies', async () => {
   const load = async () => {
     const q = $('#vq').value.trim();
     const only = $('#vonly').checked;
-    const { vacancies } = await api('GET', '/vacancies?active=true' + (only ? '&offered=true' : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    const { vacancies } = await api('GET', '/vacancies?active=true&source_ne=hh' + (only ? '&offered=true' : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
     shownIds = vacancies.map(v => v.id);
-    $('#vtable').innerHTML = renderVacTable(vacancies);
+    $('#vtable').innerHTML = renderVacTable(vacancies, { group: true });
   };
   window.__vacBulk = async (on) => {
     if (!shownIds.length) return toast('Список пуст', true);
@@ -120,23 +139,96 @@ registerTab('vacancies', async () => {
   await load();
 });
 
-function renderVacTable(vacancies) {
+
+// ─── Helpers для группировки вакансий Авито ────────────────────────────────
+function cleanVacTitle(title) {
+  return title
+    .replace(/\s*\([^)]*\)/g, '')              // сначала убрать всё в скобках
+    .replace(/\s*в\s+Rostic[''s]+\b.*/i, '')   // убрать "в Rostic's..."
+    .replace(/\s+Rostic[''s]\b.*/i, '')         // убрать "Rostic's..."
+    .replace(/\s*Ростикс\b.*/gi, '')            // убрать "Ростикс..."
+    .replace(/\s+в\s+ресторан[еа]?\b.*/i, '')  // убрать "в ресторане..."
+    .replace(/\s+ресторана?\b/i, '')            // убрать "ресторана"
+    .replace(/\s+работа\b/gi, '')              // убрать "работа"
+    .replace(/\s+на\s+лето\b/gi, '')           // убрать "на лето"
+    .replace(/\s+/g, ' ').trim();
+}
+function extractCity(loc) {
+  if (!loc) return '';
+  const skip = /обл\.|край|Республ|р-н|мун\.|муниц|округ|г\.о\.|ский\s+р|Татарс|Удмурт|Пермск|Кировск|Марий/i;
+  for (const p of loc.split(', ')) { if (!skip.test(p)) return p.trim(); }
+  return '';
+}
+function extractRestaurant(title, loc) {
+  // Всегда берём адрес из поля location — это надёжнее, чем парсить скобки
+  if (!loc) return '';
+  const skip = /обл\.|край|Республ|р-н|мун\.|муниц|округ|г\.о\.|ский\s+р|Татарс|Удмурт|Пермск|Кировск|Марий/i;
+  const parts = loc.split(', ');
+  let citySkipped = false;
+  const rest = [];
+  for (const p of parts) {
+    if (skip.test(p)) continue;
+    if (!citySkipped) { citySkipped = true; continue; }
+    rest.push(p);
+  }
+  return rest.join(', ');
+}
+function fmtSalary(s) {
+  if (!s) return '';
+  const n = parseInt((s||'').replace(/\D/g,''));
+  if (n > 0 && n < 1000) return s + ' в час';
+  return s;
+}
+function groupVacancies(vacancies) {
+  const map = new Map();
+  for (const v of vacancies) {
+    const ct = cleanVacTitle(v.title) || v.title;
+    const key = ct.toLowerCase().replace(/\s+/g,' ');
+    if (!map.has(key)) {
+      map.set(key, { ...v, title: ct, _ids: [], _citySet: new Set(), _cities: [], _restaurants: [], is_offered: false });
+    }
+    const g = map.get(key);
+    g._ids.push(v.id);
+    if (v.is_offered) g.is_offered = true;
+    const city = extractCity(v.location || '');
+    const restaurant = extractRestaurant(v.title, v.location || '');
+    // Города — только уникальные
+    if (city && !g._citySet.has(city)) { g._citySet.add(city); g._cities.push(city); }
+    if (restaurant) g._restaurants.push(restaurant);
+  }
+  return [...map.values()].map(g => ({
+    ...g,
+    location: g._cities.join('\n'),
+    company:  g._restaurants.join('\n'),
+    // salary не трогаем — fmtSalary вызывается один раз в renderVacTable
+  }));
+}
+// ───────────────────────────────────────────────────────────────────────────
+
+function renderVacTable(vacancies, opts = {}) {
+  if (opts.group) vacancies = groupVacancies(vacancies);
   if (!vacancies.length) return '<p class="muted">Вакансий нет. Проверьте ключи Авито в Настройках или добавьте вручную.</p>';
-  return `<table><thead><tr>
-    <th style="width:110px">Предлагать</th><th>Название</th><th>Зарплата</th><th>Город</th><th>Компания</th><th></th>
+  const offered = vacancies.filter(v => v.is_offered).length;
+  const total = vacancies.length;
+  const compCol = opts.group ? 'Рестораны' : 'Компания';
+  return `<div style="margin-bottom:8px"><span class="hint">Всего вакансий: <b>${total}</b> &nbsp;·&nbsp; Предлагаем боту: <b>${offered}</b> из <b>${total}</b></span></div>
+  <table><thead><tr>
+    <th style="width:140px">Предлагать (${offered}/${total})</th><th>Название</th><th>Зарплата</th><th>Город</th><th>${compCol}</th>
     </tr></thead><tbody>${vacancies.map(v => `
     <tr>
-      <td><label class="switch"><input type="checkbox" ${v.is_offered ? 'checked' : ''} onchange="toggleOffer(${v.id}, this.checked); this.nextElementSibling.textContent=this.checked?'да':'нет'"> <span class="hint">${v.is_offered ? 'да' : 'нет'}</span></label></td>
-      <td><a href="#" onclick="showVacancy(${v.id});return false">${esc(v.title)}</a></td>
-      <td class="nowrap">${esc(v.salary || '')}</td>
-      <td>${esc(v.location || '')}</td>
-      <td>${esc(v.company || '')}</td>
-      <td><button class="btn danger sm" onclick="delVacancy(${v.id})">Удалить</button></td>
+      <td><label class="switch"><input type="checkbox" ${v.is_offered ? 'checked' : ''} onchange="toggleOffer(${JSON.stringify(v._ids||[v.id])}, this.checked); this.nextElementSibling.textContent=this.checked?'да':'нет'"> <span class="hint">${v.is_offered ? 'да' : 'нет'}</span></label></td>
+      <td><a href="#" onclick="showVacancy(${v._ids?v._ids[0]:v.id});return false">${esc(v.title)}</a></td>
+      <td class="nowrap">${esc(opts.group ? fmtSalary(v.salary) : v.salary || '')}</td>
+      <td style="white-space:pre-line">${esc(v.location || '')}</td>
+      <td style="white-space:pre-line">${esc(v.company || '')}</td>
     </tr>`).join('')}</tbody></table>`;
 }
-async function toggleOffer(id, on) {
-  try { await api('PATCH', '/vacancies/' + id, { is_offered: on }); toast(on ? 'Будет предлагаться' : 'Снято'); }
-  catch (e) { toast(e.message, true); }
+async function toggleOffer(ids, on) {
+  try {
+    const arr = Array.isArray(ids) ? ids : [ids];
+    await Promise.all(arr.map(id => api('PATCH', '/vacancies/' + id, { is_offered: on })));
+    toast(on ? 'Будут предлагаться' : 'Снято');
+  } catch (e) { toast(e.message, true); }
 }
 window.toggleOffer = toggleOffer;
 async function showVacancy(id) {
@@ -189,6 +281,198 @@ async function delVacancy(id) {
 window.delVacancy = delVacancy;
 
 // ───────── Prompts ─────────
+
+// ─────────── Vacancies HH ───────────
+registerTab('_vacancies_hh_disabled', async () => {
+  view().innerHTML = `
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="hhq" placeholder="Поиск по названию/описанию…" />
+        <label class="switch sm"><input type="checkbox" id="hhonly"/> только предлагаемые</label>
+        <button class="btn sec sm" id="hhrefresh">Обновить</button>
+        <div class="right"></div>
+        <button class="btn ok sm" id="hhsync">⏳ Синхронизировать HH сейчас</button>
+      </div>
+      <div class="toolbar">
+        <span class="hint">Отметьте чекбокс «Предлагать» у нужных вакансий — бот предлагает только их. Массово для всех показанных:</span>
+        <button class="btn sec sm" id="hhoffer">✓ Предлагать все показанные</button>
+        <button class="btn sec sm" id="hhunoffer">✗ Снять все показанные</button>
+      </div>
+      <div id="hhtable"></div>
+    </div>`;
+  let shownIds = [];
+  const load = async () => {
+    const q = $('#hhq').value.trim();
+    const only = $('#hhonly').checked;
+    const { vacancies } = await api('GET', '/vacancies?active=true&source=hh' + (only ? '&offered=true' : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    shownIds = vacancies.map(v => v.id);
+    $('#hhtable').innerHTML = renderVacTable(vacancies);
+  };
+  window.__hhBulk = async (on) => {
+    if (!shownIds.length) return toast('Список пуст', true);
+    await api('POST', '/vacancies/bulk-offer', { ids: shownIds, is_offered: on });
+    toast(`Обновлено: ${shownIds.length}`); load();
+  };
+  $('#hhrefresh').onclick = load;
+  $('#hhq').onkeydown = (e) => { if (e.key === 'Enter') load(); };
+  $('#hhonly').onchange = load;
+  $('#hhsync').onclick = async () => {
+    toast('Запускаю синхронизацию HH…');
+    try {
+      const { result } = await api('POST', '/hh/sync', {});
+      toast(result.ok ? `Готово: найдено ${result.found}, новых ${result.upserted}` : 'Ошибка HH: ' + (result.errors[0] || ''), !result.ok);
+      load();
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#hhoffer').onclick = () => window.__hhBulk(true);
+  $('#hhunoffer').onclick = () => window.__hhBulk(false);
+  await load();
+});
+
+// ─── Вакансии Авито V2 — группировка по городам ─────────────────────────────
+function renderVacV2(vacancies) {
+  if (!vacancies.length) return '<p class="muted">Вакансий нет.</p>';
+
+  // Группируем по городу
+  const cityMap = new Map();
+  for (const v of vacancies) {
+    const city = extractCity(v.location || '') || '—';
+    if (!cityMap.has(city)) cityMap.set(city, []);
+    cityMap.get(city).push(v);
+  }
+
+  const offered = vacancies.filter(v => v.is_offered).length;
+  const total   = vacancies.length;
+
+  let html = `<div class="vac-counter">Всего: ${total} · Предлагаем боту: <b>${offered}</b> из ${total}</div>
+<table class="tbl v2-table"><thead><tr>
+  <th>Предлагать</th><th>Название</th><th class="nowrap">Зарплата</th><th>Ресторан</th>
+</tr></thead><tbody>`;
+
+  const sorted = [...cityMap.entries()].sort((a,b) => a[0].localeCompare(b[0],'ru'));
+  for (const [city, cvacs] of sorted) {
+    html += `<tr class="v2-city-row"><td colspan="4">${esc(city)}</td></tr>`;
+    for (const v of cvacs) {
+      const title      = cleanVacTitle(v.title) || v.title;
+      const restaurant = extractRestaurant(v.title, v.location || '');
+      const salary     = fmtSalary(v.salary || '');
+      html += `<tr>
+        <td><label class="toggle"><input type="checkbox" ${v.is_offered ? 'checked' : ''}
+          onchange="toggleOffer([${v.id}],this.checked)"><span></span></label></td>
+        <td>${esc(title)}</td>
+        <td class="nowrap">${esc(salary)}</td>
+        <td class="muted small">${esc(restaurant)}</td>
+      </tr>`;
+    }
+  }
+  html += `</tbody></table>`;
+  return html;
+}
+
+registerTab('_vacancies_v2_disabled', async () => {
+  view().innerHTML = `
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" id="v2q" placeholder="Поиск по названию…" />
+        <label class="switch sm"><input type="checkbox" id="v2only"/> только предлагаемые</label>
+        <button class="btn sec sm" id="v2refresh">Обновить</button>
+        <div class="right"></div>
+        <button class="btn ok sm" id="v2offer">✓ Предлагать все</button>
+        <button class="btn sec sm" id="v2unoffer">✗ Снять все</button>
+      </div>
+      <div id="v2table"></div>
+    </div>`;
+  let allVacs = [];
+  const load = async () => {
+    const q    = $('#v2q').value.trim();
+    const only = $('#v2only').checked;
+    const { vacancies } = await api('GET', '/vacancies?active=true&source_ne=hh'
+      + (only ? '&offered=true' : '')
+      + (q    ? '&q=' + encodeURIComponent(q) : ''));
+    allVacs = vacancies;
+    $('#v2table').innerHTML = renderVacV2(vacancies);
+  };
+  const bulkV2 = async (on) => {
+    if (!allVacs.length) return;
+    await api('POST', '/vacancies/bulk-offer', { ids: allVacs.map(v=>v.id), is_offered: on });
+    toast(`Обновлено: ${allVacs.length}`); load();
+  };
+  $('#v2refresh').onclick = load;
+  $('#v2q').onkeydown = (e) => { if (e.key==='Enter') load(); };
+  $('#v2only').onchange = load;
+  $('#v2offer').onclick   = () => bulkV2(true);
+  $('#v2unoffer').onclick = () => bulkV2(false);
+  await load();
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Вакансии (job_positions) ──────────────────────────────────────────────────
+function renderPositions(positions) {
+  if (!positions.length) return '<p class="muted">Вакансий нет.</p>';
+
+  const offered = positions.filter(p => p.is_offered).length;
+  const total   = positions.length;
+
+  // Группируем по городу, сохраняем порядок
+  const cityMap = new Map();
+  for (const p of positions) {
+    if (!cityMap.has(p.city)) cityMap.set(p.city, []);
+    cityMap.get(p.city).push(p);
+  }
+
+  let html = `<div class="vac-counter">Всего: ${total} · Предлагаем боту: <b>${offered}</b> из ${total}</div>
+<table class="tbl v2-table"><thead><tr>
+  <th>Предлагать</th><th>Категория</th><th>Вакансия</th><th>Описание</th>
+</tr></thead><tbody>`;
+
+  for (const [city, items] of cityMap) {
+    html += `<tr class="v2-city-row"><td colspan="3">${esc(city)}</td></tr>`;
+    for (const p of items) {
+      html += `<tr>
+        <td><label class="toggle"><input type="checkbox" ${p.is_offered ? 'checked' : ''}
+          onchange="togglePosition(${p.id},this.checked)"><span></span></label></td>
+        <td class="muted small">${esc(p.category)}</td>
+        <td>${esc(p.position)}</td>
+        <td class="muted small desc-cell">${esc(p.description||'').replace(/\n/g,'<br>')}</td>
+      </tr>`;
+    }
+  }
+  html += `</tbody></table>`;
+  return html;
+}
+
+window.togglePosition = async (id, on) => {
+  await api('PATCH', '/positions/' + id, { is_offered: on });
+};
+
+registerTab('positions', async () => {
+  view().innerHTML = `
+    <div class="card">
+      <div class="toolbar">
+        <span class="hint">Отметьте вакансии, которые бот будет предлагать кандидатам</span>
+        <div class="right"></div>
+        <button class="btn ok sm" id="posOffer">✓ Предлагать все</button>
+        <button class="btn sec sm" id="posUnoffer">✗ Снять все</button>
+      </div>
+      <div id="postable"></div>
+    </div>`;
+  let allPos = [];
+  const load = async () => {
+    const { positions } = await api('GET', '/positions');
+    allPos = positions;
+    $('#postable').innerHTML = renderPositions(positions);
+  };
+  const bulkPos = async (on) => {
+    if (!allPos.length) return;
+    await api('POST', '/positions/bulk-offer', { ids: allPos.map(p=>p.id), is_offered: on });
+    toast(`Обновлено: ${allPos.length}`); load();
+  };
+  $('#posOffer').onclick   = () => bulkPos(true);
+  $('#posUnoffer').onclick = () => bulkPos(false);
+  await load();
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 registerTab('prompts', async () => {
   const { prompts } = await api('GET', '/prompts');
   const { settings } = await api('GET', '/settings');
@@ -249,13 +533,13 @@ registerTab('candidates', async () => {
   view().innerHTML = `<div class="card">
     <h3>Соискатели (${candidates.length})</h3>
     ${candidates.length ? `<table><thead><tr>
-      <th>Имя</th><th>Телефон</th><th>Должность</th><th>Город</th><th>Опыт</th><th>Сделка</th><th>Сообщений</th><th></th>
+      <th>ФИО</th><th>Телефон</th><th>Возраст</th><th>Город</th><th>Гражданство</th><th>Вакансия</th><th>Срок работы</th><th>График</th><th>Сделка</th><th></th>
     </tr></thead><tbody>${candidates.map(c => `<tr>
       <td>${esc(c.full_name || '—')}</td><td>${esc(c.phone || '')}</td>
-      <td>${esc(c.desired_position || '')}</td><td>${esc(c.city || '')}</td>
-      <td>${esc((c.experience || '').slice(0, 40))}</td>
+      <td>${esc(c.age || '')}</td><td>${esc(c.city || '')}</td>
+      <td>${esc(c.citizenship || '')}</td><td>${esc(c.desired_position || '')}</td>
+      <td>${esc(c.work_duration || '')}</td><td>${esc(c.schedule || '')}</td>
       <td>${c.crm_deal_id ? '#' + c.crm_deal_id : '<span class="pill off">нет</span>'}</td>
-      <td>${c.msg_count || 0}</td>
       <td><button class="btn sec sm" onclick="showDialog('${esc(c.dialog_id)}')">Диалог</button></td>
     </tr>`).join('')}</tbody></table>` : '<p class="muted">Пока нет собранных анкет.</p>'}
   </div>`;
@@ -345,13 +629,12 @@ registerTab('billing', async () => {
       </tbody></table></div>` : ''}
 
     <div class="card"><h3>Выписка по балансу</h3>
-      ${s.transactions.length ? `<table><thead><tr><th>Дата</th><th>Операция</th><th>Токены</th><th>Остаток</th><th>Описание</th></tr></thead><tbody>
+      ${s.transactions.length ? `<table><thead><tr><th>Дата</th><th>Операция</th><th>Токены</th><th>Остаток</th></tr></thead><tbody>
       ${s.transactions.map(t => `<tr>
         <td class="nowrap">${new Date(t.created_at).toLocaleString('ru')}</td>
         <td>${txnKind[t.kind] || t.kind}</td>
         <td style="color:${t.tokens < 0 ? 'var(--danger)' : 'var(--ok)'}">${t.tokens > 0 ? '+' : ''}${fmtNum(t.tokens)}</td>
         <td>${fmtNum(t.balance_after)}</td>
-        <td>${esc(t.description || '')}</td>
       </tr>`).join('')}</tbody></table>` : '<p class="muted">Операций пока нет.</p>'}
     </div>
 
@@ -422,10 +705,9 @@ registerTab('settings', async () => {
     </div>
 
     <div class="card"><h3>Нейрон (модель ответа)</h3>
-      <p class="hint">Сейчас подключается бесплатный BitrixGPT от Битрикс. На будущее можно выбрать платную модель или подключить свой ключ (BYOK).</p>
       <label>Модель</label>
       <select id="s_model">
-        <option value="" ${!settings.ai_model ? 'selected' : ''}>— Бесплатный BitrixGPT (по умолчанию: ${esc(modelData.defaultModel || 'bitrix/free')}) —</option>
+        <option value="" ${!settings.ai_model ? 'selected' : ''}>— BitrixGPT (по умолчанию: ${esc(modelData.defaultModel || 'bitrix/free')}) —</option>
         ${usableOpts}
       </select>
       <label>Или укажите модель вручную (для платной/BYOK)</label>
@@ -460,7 +742,15 @@ registerTab('settings', async () => {
       </details>
     </div>
 
-    <div class="card"><h3>Встраивание в Битрикс24</h3>
+    
+    <div class="card"><h3>Вакансии с HH.ru</h3>
+      <p class="hint">Укажите ID работодателя — бот автоматически подтянет активные вакансии. ID виден в URL: hh.ru/employer/<b>66989</b></p>
+      <label>ID работодателя (hh.ru)</label>
+      <input type="text" id="s_hh_id" placeholder="например: 66989" value="${esc(settings.hh_employer_id || '')}">
+      <p class="hint" style="margin-top:8px">После сохранения → вкладка «Вакансии HH» → «Синхронизировать HH сейчас».</p>
+    </div>
+
+<div class="card"><h3>Встраивание в Битрикс24</h3>
       <div id="embed_box"><p class="muted">Загрузка статуса приложения…</p></div>
     </div>
 
@@ -504,10 +794,14 @@ registerTab('settings', async () => {
       max_tokens: Number($('#s_maxtok').value),
       avito_sources: avito,
       avito_client_id: $('#s_avito_id').value.trim(),
+      hh_employer_id: ($('#s_hh_id') ? $('#s_hh_id').value.trim() : undefined),
+      hh_client_id: ($('#s_hh_client_id') ? $('#s_hh_client_id').value.trim() : undefined),
       avito_only_vacancies: $('#s_avito_only').checked,
     };
     const secret = $('#s_avito_secret').value.trim();
     if (secret) payload.avito_client_secret = secret;
+    const hhSecret = $('#s_hh_client_secret') ? $('#s_hh_client_secret').value.trim() : '';
+    if (hhSecret) payload.hh_client_secret = hhSecret;
     try {
       await api('PUT', '/settings', payload);
       toast('Настройки сохранены');

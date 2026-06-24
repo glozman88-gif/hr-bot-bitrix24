@@ -81,3 +81,14 @@ export async function updateDealFromCandidate(dealId, candidate, offeredVacancie
     console.warn('[crm] обновление сделки не удалось:', e.message);
   }
 }
+
+// Смена стадии CRM-сделки (best-effort, не блокирует ответ).
+export async function changeDealStage(dealId, stageId) {
+  if (!dealId || !stageId) return;
+  try {
+    await vibePatch(`/deals/${dealId}`, { stageId });
+    console.log(`[crm] стадия сделки ${dealId} → ${stageId}`);
+  } catch (e) {
+    console.warn('[crm] смена стадии не удалась:', e.message);
+  }
+}

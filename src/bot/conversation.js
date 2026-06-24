@@ -1,13 +1,13 @@
 import { query, getSettings } from '../db.js';
 import { chatCompletion } from '../vibe.js';
-import { resolveDealId, updateDealFromCandidate } from './crm.js';
+import { resolveDealId, updateDealFromCandidate, changeDealStage } from './crm.js';
 import { debitTokens } from '../billing.js';
 
 // Обработка одного входящего сообщения соискателя.
 
 const CANDIDATE_FIELDS = [
-  'full_name', 'phone', 'email', 'city',
-  'desired_position', 'experience', 'salary_expectation', 'schedule',
+  'full_name', 'age', 'city', 'phone', 'citizenship',
+  'desired_position', 'work_duration', 'schedule',
 ];
 
 // Достаём активный промпт (тип задачи) из настроек.
@@ -23,8 +23,7 @@ async function getActivePrompt(settings) {
 // Вакансии, помеченные «предлагать».
 async function getOfferableVacancies() {
   const { rows } = await query(
-    `SELECT id, title, description, salary, location, company, url
-     FROM vacancies WHERE is_offered=TRUE AND is_active=TRUE ORDER BY updated_at DESC LIMIT 40`
+    `SELECT id, city, category, position, description FROM job_positions WHERE is_offered=TRUE ORDER BY city, sort_order, id`
   );
   return rows;
 }
@@ -40,16 +39,12 @@ async function getContext(dialogId, limit) {
   return rows;
 }
 
-function vacanciesBlock(vacancies) {
-  if (!vacancies.length) return 'Сейчас активных вакансий для предложения нет.';
-  return vacancies.map(v => {
-    const parts = [`#${v.id} ${v.title}`];
-    if (v.salary) parts.push(`зарплата: ${v.salary}`);
-    if (v.location) parts.push(`город: ${v.location}`);
-    if (v.company) parts.push(`компания: ${v.company}`);
-    const head = parts.join(', ');
-    const desc = (v.description || '').slice(0, 600);
-    return `${head}\n${desc}`;
+function vacanciesBlock(positions) {
+  if (!positions.length) return 'Сейчас активных вакансий для предложения нет.';
+  return positions.map(p => {
+    const head = `#${p.id} ${p.position}, город: ${p.city}, категория: ${p.category}`;
+    const desc = (p.description || '').slice(0, 800);
+    return desc ? `${head}\n${desc}` : head;
   }).join('\n---\n');
 }
 
@@ -65,9 +60,11 @@ ${vacanciesBlock(vacancies)}
 {
   "reply": "текст ответа соискателю (вежливо, по-русски, кратко)",
   "extracted": { ${fields.split(', ').map(f => `"${f}": "значение или пустая строка"`).join(', ')} },
-  "suggested_vacancy_ids": [номера вакансий из списка, если уместно предложить]
+  "suggested_vacancy_ids": [номера вакансий из списка, если уместно предложить],
+  "transfer_to_operator": false
 }
-В "extracted" указывай только то, что соискатель действительно сообщил; не выдумывай. Поля, которых нет, оставляй пустыми.`;
+В "extracted" указывай только то, что соискатель действительно сообщил; не выдумывай. Поля, которых нет, оставляй пустыми.
+Установи "transfer_to_operator": true когда по инструкции нужен перевод на оператора.`;
 }
 
 // Лениво и безопасно извлекаем JSON из ответа модели.
@@ -106,11 +103,11 @@ async function upsertCandidate(dialogId, dealId, extracted, suggestedIds) {
   const { rows } = await query('SELECT * FROM candidates WHERE dialog_id=$1', [dialogId]);
   if (!rows.length) {
     await query(
-      `INSERT INTO candidates (dialog_id, crm_deal_id, full_name, phone, email, city,
-        desired_position, experience, salary_expectation, schedule, fields, offered_vacancy_ids)
+      `INSERT INTO candidates (dialog_id, crm_deal_id, full_name, age, city, phone,
+        citizenship, desired_position, work_duration, schedule, fields, offered_vacancy_ids)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [dialogId, dealId, std.full_name, std.phone, std.email, std.city,
-       std.desired_position, std.experience, std.salary_expectation, std.schedule,
+      [dialogId, dealId, std.full_name, std.age, std.city, std.phone,
+       std.citizenship, std.desired_position, std.work_duration, std.schedule,
        JSON.stringify(extra), suggestedIds || []]
     );
   } else {
@@ -120,14 +117,14 @@ async function upsertCandidate(dialogId, dealId, extracted, suggestedIds) {
     const mergedOffered = Array.from(new Set([...(cur.offered_vacancy_ids || []), ...(suggestedIds || [])]));
     await query(
       `UPDATE candidates SET crm_deal_id=COALESCE($2,crm_deal_id),
-        full_name=$3, phone=$4, email=$5, city=$6, desired_position=$7,
-        experience=$8, salary_expectation=$9, schedule=$10, fields=$11,
+        full_name=$3, age=$4, city=$5, phone=$6, citizenship=$7, desired_position=$8,
+        work_duration=$9, schedule=$10, fields=$11,
         offered_vacancy_ids=$12, updated_at=now() WHERE dialog_id=$1`,
       [dialogId, dealId,
-       merge(cur.full_name, std.full_name), merge(cur.phone, std.phone),
-       merge(cur.email, std.email), merge(cur.city, std.city),
-       merge(cur.desired_position, std.desired_position), merge(cur.experience, std.experience),
-       merge(cur.salary_expectation, std.salary_expectation), merge(cur.schedule, std.schedule),
+       merge(cur.full_name, std.full_name), merge(cur.age, std.age),
+       merge(cur.city, std.city), merge(cur.phone, std.phone),
+       merge(cur.citizenship, std.citizenship), merge(cur.desired_position, std.desired_position),
+       merge(cur.work_duration, std.work_duration), merge(cur.schedule, std.schedule),
        JSON.stringify(mergedFields), mergedOffered]
     );
   }
@@ -190,6 +187,7 @@ export async function handleUserMessage({ dialogId, text }) {
   const extracted = parsed?.extracted || {};
   const suggestedIds = Array.isArray(parsed?.suggested_vacancy_ids)
     ? parsed.suggested_vacancy_ids.map(Number).filter(Boolean) : [];
+  const transferToOperator = parsed?.transfer_to_operator === true;
 
   // 5. Сохранить ответ ассистента.
   await query('INSERT INTO messages (dialog_id, role, text) VALUES ($1,$2,$3)', [dialogId, 'assistant', reply]);
@@ -207,6 +205,9 @@ export async function handleUserMessage({ dialogId, text }) {
           ? vacancies.filter(v => suggestedIds.includes(v.id))
           : [];
         await updateDealFromCandidate(dealId, candidate, offered);
+        if (transferToOperator) {
+          await changeDealStage(dealId, 'C7:UC_CW28EB');
+        }
       }
     }
   } catch (e) {

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query, getSettings } from '../db.js';
 import { authMiddleware } from './auth.js';
 import { runAvitoSync, getLastAvitoRun } from '../avito/scheduler.js';
+import { runHHSync, getLastHHRun } from '../hh/scheduler.js';
 import { fetchAvitoItemDescription } from '../avito/parser.js';
 import { vibeGet, vibePost } from '../vibe.js';
 import { config } from '../config.js';
@@ -39,6 +40,8 @@ adminRouter.get('/settings', wrap(async (req, res) => {
   // Не отдаём секрет в браузер — только признак, что он задан.
   s.avito_secret_set = !!s.avito_client_secret;
   delete s.avito_client_secret;
+  s.hh_secret_set = !!s.hh_client_secret;
+  delete s.hh_client_secret;
   res.json({ settings: s, bot: botState[0] });
 }));
 
@@ -47,10 +50,11 @@ adminRouter.put('/settings', wrap(async (req, res) => {
   const allowed = [
     'bot_enabled', 'ai_model', 'byok_provider', 'active_prompt_id',
     'crm_entity_type', 'crm_update_enabled', 'temperature', 'max_tokens',
-    'avito_client_id', 'avito_client_secret', 'avito_only_vacancies',
+    'avito_client_id', 'avito_client_secret', 'avito_only_vacancies', 'hh_employer_id', 'hh_client_id', 'hh_client_secret',
   ];
   // Пустой секрет из формы не должен затирать сохранённый.
   if ('avito_client_secret' in b && !b.avito_client_secret) delete b.avito_client_secret;
+  if ('hh_client_secret' in b && !b.hh_client_secret) delete b.hh_client_secret;
   const sets = [];
   const vals = [];
   let i = 1;
@@ -116,13 +120,15 @@ adminRouter.delete('/prompts/:id', wrap(async (req, res) => {
 
 // ── Вакансии ──
 adminRouter.get('/vacancies', wrap(async (req, res) => {
-  const { offered, active, q } = req.query;
+  const { offered, active, q, source, source_ne } = req.query;
   const where = [];
   const vals = [];
   let i = 1;
   if (offered === 'true') where.push('is_offered=TRUE');
   if (active === 'true') where.push('is_active=TRUE');
   if (q) { where.push(`(title ILIKE $${i} OR description ILIKE $${i})`); vals.push(`%${q}%`); i++; }
+  if (source) { where.push(`source=$${i++}`); vals.push(source); }
+  if (source_ne) { where.push(`source!=$${i++}`); vals.push(source_ne); }
   const sql = `SELECT id, source, external_id, title, salary, location, company, url,
     is_offered, is_active, parsed_at, length(description) AS desc_len
     FROM vacancies ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -188,6 +194,16 @@ adminRouter.get('/avito/status', wrap(async (req, res) => {
 
 adminRouter.post('/avito/sync', wrap(async (req, res) => {
   const result = await runAvitoSync({ withDescriptions: req.body?.withDescriptions !== false });
+  res.json({ result });
+}));
+
+// ── HH.ru: статус и ручной запуск синхронизации ──
+adminRouter.get('/hh/status', wrap(async (req, res) => {
+  res.json({ lastRun: getLastHHRun() });
+}));
+
+adminRouter.post('/hh/sync', wrap(async (req, res) => {
+  const result = await runHHSync();
   res.json({ result });
 }));
 
@@ -361,5 +377,36 @@ adminRouter.get('/stats', wrap(async (req, res) => {
     candidates: c.rows[0].total,
     dialogs: m.rows[0].dialogs,
     avito: getLastAvitoRun(),
+    hh: getLastHHRun(),
   });
+}));
+
+
+// ── Ручные вакансии (job_positions) ──────────────────────────────────────────
+adminRouter.get('/positions', wrap(async (req, res) => {
+  const { rows } = await query(
+    'SELECT id,city,category,position,description,is_offered,sort_order FROM job_positions ORDER BY city, sort_order, id'
+  );
+  res.json({ positions: rows });
+}));
+
+adminRouter.patch('/positions/:id', wrap(async (req, res) => {
+  const { id } = req.params;
+  const { is_offered } = req.body;
+  const { rows } = await query(
+    'UPDATE job_positions SET is_offered=$1 WHERE id=$2 RETURNING *',
+    [is_offered, id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'NOT_FOUND' });
+  res.json({ position: rows[0] });
+}));
+
+adminRouter.post('/positions/bulk-offer', wrap(async (req, res) => {
+  const { ids, is_offered } = req.body;
+  if (!Array.isArray(ids) || !ids.length) return res.json({ updated: 0 });
+  await query(
+    `UPDATE job_positions SET is_offered=$1 WHERE id = ANY($2::int[])`,
+    [is_offered, ids]
+  );
+  res.json({ updated: ids.length });
 }));

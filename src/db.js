@@ -177,6 +177,15 @@ CREATE TABLE IF NOT EXISTS processed_events (
 );
 
 -- Курсор polling-а бота (на случай, если хотим хранить локально).
+CREATE TABLE IF NOT EXISTS job_positions (
+  id          SERIAL PRIMARY KEY,
+  city        TEXT NOT NULL,
+  category    TEXT NOT NULL,
+  position    TEXT NOT NULL,
+  is_offered  BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS bot_state (
   id          INT PRIMARY KEY DEFAULT 1,
   bot_id      BIGINT,
@@ -203,13 +212,44 @@ ALTER TABLE settings ADD COLUMN IF NOT EXISTS avito_only_vacancies BOOLEAN NOT N
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payer_name TEXT;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payer_inn  TEXT;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS is_promised BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS hh_employer_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS hh_client_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS hh_client_secret TEXT NOT NULL DEFAULT '';
 `;
 
 export async function migrate() {
   await pool.query(SCHEMA);
   await pool.query(ALTERS);
   // Тариф по умолчанию: 1 ₽ за 1000 токенов (10 млн токенов = 10 000 ₽).
-  await pool.query("UPDATE billing_account SET token_price_rub=1.0 WHERE id=1 AND token_price_rub=0");
+  await pool.query("UPDATE billing_account SET token_price_rub=1.0 WHERE id=1 AND token_price_rub=0")
+  // Заполняем job_positions если пусто
+  const { rowCount } = await pool.query('SELECT 1 FROM job_positions LIMIT 1');
+  if (rowCount === 0) {
+    const seeds = [
+      // Ижевск — полный набор
+      ['Ижевск','Рестораны ROSTIC\'S','Сотрудник ресторана',1,1],
+      ['Ижевск','Рестораны ROSTIC\'S','Сотрудник зала',1,2],
+      ['Ижевск','Рестораны ROSTIC\'S','Грузчик',1,3],
+      ['Ижевск','Бильярд-клуб «Кино»','Повар',1,4],
+      ['Ижевск','Офис компании','Офисные вакансии',1,5],
+      ['Ижевск','Руководящие должности','Руководящие должности',1,6],
+      // Остальные города — только рестораны
+      ...['Глазов','Воткинск','Сарапул','Пермь','Наб. Челны','Нижнекамск','Альметьевск','Киров','Кирово-Чепецк'].flatMap((city,ci) => [
+        [city,'Рестораны ROSTIC\'S','Сотрудник ресторана',1,ci*10+1],
+        [city,'Рестораны ROSTIC\'S','Сотрудник зала',1,ci*10+2],
+        [city,'Рестораны ROSTIC\'S','Грузчик',1,ci*10+3],
+        [city,'Рестораны ROSTIC\'S','Руководящие должности',1,ci*10+4],
+      ]),
+    ];
+    for (const [city,category,position,is_offered,sort_order] of seeds) {
+      await pool.query(
+        'INSERT INTO job_positions(city,category,position,is_offered,sort_order) VALUES($1,$2,$3,$4,$5)',
+        [city,category,position,is_offered===1,sort_order]
+      );
+    }
+    console.log('[db] job_positions seeded');
+  }
+;
   // Засеять дефолтный промпт, если промптов ещё нет.
   const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM prompts');
   if (rows[0].c === 0) {

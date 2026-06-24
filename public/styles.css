@@ -3,6 +3,21 @@
   --primary:#2066b0; --primary-d:#17518f; --ok:#2e9e5b; --warn:#c9881f; --danger:#c0392b;
   --radius:10px;
 }
+[data-theme="dark"]{
+  --bg:#16191f; --card:#1f2330; --line:#2b2f3d; --text:#dde2ea; --muted:#6b7585;
+  --primary:#4a90d9; --primary-d:#357abd; --ok:#34b96f; --warn:#d4a030; --danger:#e05050;
+}
+[data-theme="dark"] input[type=text],
+[data-theme="dark"] input[type=number],
+[data-theme="dark"] select,
+[data-theme="dark"] textarea{background:var(--card);color:var(--text);border-color:var(--line)}
+[data-theme="dark"] tr:hover td{background:#252839}
+[data-theme="dark"] .modal-card{background:var(--card);color:var(--text)}
+[data-theme="dark"] .btn.sec{background:#2b2f3d;color:var(--text)}
+[data-theme="dark"] code{background:#2b2f3d}
+.theme-btn{border:0;background:transparent;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px;line-height:1}
+.theme-btn:hover{background:var(--line)}
+
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
 .muted{color:var(--muted);font-weight:400}
@@ -57,3 +72,21 @@ tr:hover td{background:#fafbfc}
 .nowrap{white-space:nowrap}
 .desc{white-space:pre-wrap;line-height:1.5}
 code{background:#eef2f7;padding:1px 5px;border-radius:4px}
+
+[data-theme="dark"] a{color:#6ab0f5}
+[data-theme="dark"] a:hover{color:#90c8ff}
+
+/* ─── Вакансии Авито V2 ────────────────────────────────────────────────────── */
+.v2-table { width: 100%; border-collapse: collapse; }
+.v2-city-row td {
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  padding: 14px 12px;
+  border: 2px solid var(--line);
+  background: var(--bg);
+  letter-spacing: 0.02em;
+}
+.v2-city-row:not(:first-child) td { border-top: 24px solid var(--bg); }
+
+.desc-cell { max-width: 340px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
