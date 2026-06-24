@@ -192,20 +192,52 @@ export async function listTransactions(limit = 100) {
   return rows;
 }
 
-// Выписка с фильтрами: direction (credit|debit|all), период (from/to ISO-даты).
-export async function getTransactionsFiltered({ direction = 'all', from = null, to = null, limit = 500 } = {}) {
-  const where = [];
-  const vals = [];
-  let i = 1;
-  if (direction === 'credit') where.push('tokens > 0');
-  else if (direction === 'debit') where.push('tokens < 0');
-  if (from) { where.push(`created_at >= $${i++}`); vals.push(from); }
-  if (to) { where.push(`created_at < ($${i++}::date + INTERVAL '1 day')`); vals.push(to); }
-  vals.push(limit);
-  const sql = `SELECT * FROM billing_transactions
-    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY created_at DESC LIMIT $${i}`;
-  const { rows } = await query(sql, vals);
+// Агрегированная выписка: пополнения — отдельными строками; списания —
+// КОНСОЛИДИРОВАНО по диалогу (сумма токенов + последняя дата). direction:
+// all|credit|debit. Период (from/to) для пополнений по дате операции, для
+// консолидированных списаний — по ПОСЛЕДНЕЙ дате списания по диалогу.
+export async function getLedger({ direction = 'all', from = null, to = null, limit = 500 } = {}) {
+  const entries = [];
+
+  if (direction !== 'debit') {
+    const w = ['tokens > 0'];
+    const v = []; let i = 1;
+    if (from) { w.push(`created_at >= $${i++}`); v.push(from); }
+    if (to) { w.push(`created_at < ($${i++}::date + INTERVAL '1 day')`); v.push(to); }
+    v.push(limit);
+    const { rows } = await query(
+      `SELECT id, kind, tokens, description, balance_after, created_at AS date
+       FROM billing_transactions WHERE ${w.join(' AND ')} ORDER BY created_at DESC LIMIT $${i}`, v);
+    for (const r of rows) entries.push({ type: 'credit', ...r });
+  }
+
+  if (direction !== 'credit') {
+    const having = []; const v = []; let i = 1;
+    if (from) { having.push(`MAX(created_at) >= $${i++}`); v.push(from); }
+    if (to) { having.push(`MAX(created_at) < ($${i++}::date + INTERVAL '1 day')`); v.push(to); }
+    v.push(limit);
+    const { rows } = await query(
+      `SELECT COALESCE(dialog_id,'—') AS dialog_id,
+              SUM(tokens)::bigint AS total_tokens, COUNT(*)::int AS cnt,
+              MIN(created_at) AS first_at, MAX(created_at) AS last_at,
+              MIN(balance_after)::bigint AS balance_after
+       FROM billing_transactions WHERE tokens < 0
+       GROUP BY COALESCE(dialog_id,'—')
+       ${having.length ? 'HAVING ' + having.join(' AND ') : ''}
+       ORDER BY MAX(created_at) DESC LIMIT $${i}`, v);
+    for (const r of rows) entries.push({ type: 'debit_group', dialog_id: r.dialog_id, total_tokens: Number(r.total_tokens), cnt: r.cnt, first_at: r.first_at, last_at: r.last_at, balance_after: Number(r.balance_after), date: r.last_at });
+  }
+
+  entries.sort((a, b) => new Date(b.date) - new Date(a.date));
+  return entries.slice(0, limit);
+}
+
+// История списаний по конкретному диалогу (для разворота консолидированной строки).
+export async function getDialogDebits(dialogId, { limit = 500 } = {}) {
+  const { rows } = await query(
+    `SELECT id, tokens, description, balance_after, created_at
+     FROM billing_transactions WHERE dialog_id=$1 AND tokens < 0
+     ORDER BY created_at DESC LIMIT $2`, [dialogId, limit]);
   return rows;
 }
 

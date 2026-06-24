@@ -6,7 +6,7 @@ import { runHHSync, getLastHHRun } from '../hh/scheduler.js';
 import { fetchAvitoItemDescription } from '../avito/parser.js';
 import { vibeGet, vibePost } from '../vibe.js';
 import { config } from '../config.js';
-import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer, generateActPdfBuffer, getTransactionsFiltered } from '../billing.js';
+import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer, generateActPdfBuffer, getLedger, getDialogDebits } from '../billing.js';
 import { runTbankSync, getTbankStatus } from '../billing/tbank.js';
 
 export const adminRouter = Router();
@@ -322,11 +322,16 @@ adminRouter.post('/billing/topup', requireAdmin, wrap(async (req, res) => {
   res.json({ ok: true, balance });
 }));
 
-// Выписка по балансу с фильтрами (тип + период).
+// Выписка: пополнения отдельными строками, списания консолидированы по диалогу.
 adminRouter.get('/billing/transactions', wrap(async (req, res) => {
   const { direction, from, to } = req.query;
-  const rows = await getTransactionsFiltered({ direction: direction || 'all', from: from || null, to: to || null });
-  res.json({ transactions: rows });
+  const entries = await getLedger({ direction: direction || 'all', from: from || null, to: to || null });
+  res.json({ entries });
+}));
+// История списаний по диалогу (разворот консолидированной строки).
+adminRouter.get('/billing/dialog-debits/:dialogId', wrap(async (req, res) => {
+  const rows = await getDialogDebits(req.params.dialogId);
+  res.json({ debits: rows });
 }));
 // Выставить счёт может и клиент (в т.ч. обещанный платёж). Ограничения обещанного — в createInvoice.
 adminRouter.post('/billing/invoice', wrap(async (req, res) => {

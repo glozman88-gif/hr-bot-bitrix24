@@ -694,8 +694,8 @@ registerTab('billing', async () => {
     const qs = new URLSearchParams({ direction: dir });
     if (from) qs.set('from', from); if (to) qs.set('to', to);
     try {
-      const { transactions } = await api('GET', '/billing/transactions?' + qs.toString());
-      $('#txn_box').innerHTML = renderTxns(transactions);
+      const { entries } = await api('GET', '/billing/transactions?' + qs.toString());
+      $('#txn_box').innerHTML = renderTxns(entries);
     } catch (e) { $('#txn_box').innerHTML = `<p class="banner err">${esc(e.message)}</p>`; }
   }
   $('#f_apply').onclick = loadTxns;
@@ -745,21 +745,56 @@ registerTab('billing', async () => {
   }
 });
 
-// Рендер выписки: списания показывают диалог и ссылку на него.
-function renderTxns(txns) {
-  if (!txns || !txns.length) return '<p class="muted">Операций по фильтру нет.</p>';
-  return `<table><thead><tr><th>Дата</th><th>Операция</th><th>Детали</th><th>Токены</th><th>Остаток</th></tr></thead><tbody>
-    ${txns.map(t => {
-      const dlg = t.dialog_id ? `по диалогу <a href="#" onclick="billingDialog('${esc(t.dialog_id)}');return false">${esc(t.dialog_id)}</a>` : esc(t.description || '');
+// Рендер выписки: пополнения — отдельные строки; списания — консолидированы по
+// диалогу (сумма + последняя дата), разворачиваются в историю по датам.
+function renderTxns(entries) {
+  if (!entries || !entries.length) return '<p class="muted">Операций по фильтру нет.</p>';
+  return `<table><thead><tr><th></th><th>Дата</th><th>Операция</th><th>Детали</th><th>Токены</th><th>Остаток</th></tr></thead><tbody>
+    ${entries.map((e) => {
+      if (e.type === 'credit') {
+        return `<tr>
+          <td></td>
+          <td class="nowrap">${new Date(e.date).toLocaleString('ru')}</td>
+          <td>${txnKind[e.kind] || e.kind}</td>
+          <td>${esc(e.description || '')}</td>
+          <td style="color:var(--ok)">+${fmtNum(e.tokens)}</td>
+          <td>${fmtNum(e.balance_after)}</td>
+        </tr>`;
+      }
+      // консолидированное списание по диалогу
+      const dlg = e.dialog_id && e.dialog_id !== '—'
+        ? `списание по диалогу <a href="#" onclick="billingDialog('${esc(e.dialog_id)}');return false">${esc(e.dialog_id)}</a> <span class="hint">(${e.cnt} спис.)</span>`
+        : `списание <span class="hint">(${e.cnt} спис.)</span>`;
+      const key = encodeURIComponent(e.dialog_id);
       return `<tr>
-        <td class="nowrap">${new Date(t.created_at).toLocaleString('ru')}</td>
-        <td>${txnKind[t.kind] || t.kind}</td>
-        <td>${dlg}</td>
-        <td style="color:${t.tokens < 0 ? 'var(--danger)' : 'var(--ok)'}">${t.tokens > 0 ? '+' : ''}${fmtNum(t.tokens)}</td>
-        <td>${fmtNum(t.balance_after)}</td>
-      </tr>`;
+          <td><button class="btn sec sm" onclick="toggleDebitGroup('${key}', this)" title="История списаний">▸</button></td>
+          <td class="nowrap">${new Date(e.last_at).toLocaleString('ru')}</td>
+          <td>Списание (итог)</td>
+          <td>${dlg}</td>
+          <td style="color:var(--danger)">${fmtNum(e.total_tokens)}</td>
+          <td>${fmtNum(e.balance_after)}</td>
+        </tr>
+        <tr id="dbg-${key}" style="display:none"><td></td><td colspan="5"><div class="hint">Загрузка…</div></td></tr>`;
     }).join('')}</tbody></table>`;
 }
+// Развернуть/свернуть историю списаний по диалогу.
+async function toggleDebitGroup(key, btn) {
+  const row = document.getElementById('dbg-' + key);
+  if (!row) return;
+  if (row.style.display !== 'none') { row.style.display = 'none'; btn.textContent = '▸'; return; }
+  row.style.display = ''; btn.textContent = '▾';
+  try {
+    const { debits } = await api('GET', '/billing/dialog-debits/' + key);
+    const cell = row.querySelector('td:last-child');
+    cell.innerHTML = debits && debits.length
+      ? `<table style="margin:4px 0"><thead><tr><th>Дата</th><th>Списано</th><th>Остаток</th></tr></thead><tbody>
+          ${debits.map(d => `<tr><td class="nowrap">${new Date(d.created_at).toLocaleString('ru')}</td>
+            <td style="color:var(--danger)">${fmtNum(d.tokens)}</td><td>${fmtNum(d.balance_after)}</td></tr>`).join('')}
+        </tbody></table>`
+      : '<div class="hint">нет данных</div>';
+  } catch (e) { row.querySelector('td:last-child').innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+}
+window.toggleDebitGroup = toggleDebitGroup;
 // Открыть переписку диалога (по ссылке из выписки списаний).
 async function billingDialog(dialogId) {
   try {
