@@ -109,6 +109,30 @@ export async function createInvoice({ tokens, amountRub, note, payerName, payerI
   return inv;
 }
 
+// Сгенерировать PDF закрывающего акта (только для оплаченного счёта).
+export async function generateActPdfBuffer(id) {
+  const { rows } = await query('SELECT * FROM invoices WHERE id=$1', [id]);
+  const inv = rows[0];
+  if (!inv) throw new Error('Счёт не найден');
+  if (inv.status !== 'paid') throw new Error('Акт доступен только для оплаченного счёта');
+  const amount = Number(inv.amount_rub || 0);
+  const { generateActPdf } = require('../billing/act.cjs');
+  return generateActPdf({
+    recipient: RECIPIENT,
+    act: {
+      number: `A-${String(inv.id).padStart(4, '0')}`,
+      date: inv.paid_at || inv.created_at,
+      customer: { name: inv.payer_name || '', inn: inv.payer_inn || '' },
+      items: [{
+        name: `Пополнение баланса токенов HR-бота (${Number(inv.tokens || 0).toLocaleString('ru')} токенов)`,
+        qty: 1, price: amount, sum: amount,
+      }],
+      total: amount,
+    },
+    signatureBuffer: null,
+  });
+}
+
 // Сгенерировать PDF счёта-оферты (буфер). Лениво грузим CJS-модуль pdfkit.
 export async function generateInvoicePdfBuffer(id) {
   const { rows } = await query('SELECT * FROM invoices WHERE id=$1', [id]);

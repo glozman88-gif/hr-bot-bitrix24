@@ -657,6 +657,19 @@ registerTab('billing', async () => {
       <button class="btn ok" id="t_check">🔄 Проверить оплаты сейчас</button>
     </div>` : ''}
 
+    ${(s.invoices && s.invoices.length) ? `<div class="card"><h3>Счета и акты</h3>
+      <table><thead><tr><th>№</th><th>Плательщик</th><th>Сумма</th><th>Статус</th><th>Дата</th><th>Документы</th></tr></thead><tbody>
+      ${s.invoices.map(i => `<tr>
+        <td>${esc(i.number||i.id)}${i.is_promised ? ' <span class="pill warn">обещанный</span>' : ''}</td>
+        <td>${esc(i.payer_name||'—')}</td>
+        <td class="nowrap">${fmtRub(i.amount_rub)}</td>
+        <td>${invStatus[i.status] || i.status}</td>
+        <td class="nowrap">${new Date(i.created_at).toLocaleDateString('ru')}</td>
+        <td class="nowrap"><button class="btn sec sm" onclick="invoicePdf(${i.id})">📄 Счёт</button>
+          ${i.status === 'paid' ? `<button class="btn sec sm" onclick="actPdf(${i.id})">📑 Акт</button>` : ''}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>` : ''}
+
     <div class="card"><h3>Выписка по балансу</h3>
       <div class="toolbar">
         <select id="f_dir">
@@ -751,20 +764,22 @@ async function billingDialog(dialogId) {
 }
 window.billingDialog = billingDialog;
 // Скачать PDF счёта (через fetch с заголовком сессии → blob).
-async function invoicePdf(id) {
+async function openPdf(path) {
   try {
-    const res = await fetch('/api/billing/invoice/' + id + '/pdf', {
-      credentials: 'include',
-      headers: VIBE_SESSION ? { 'X-App-Session': 'Bearer ' + VIBE_SESSION } : {},
-    });
-    if (!res.ok) throw new Error('Ошибка ' + res.status);
+    const headers = {};
+    if (VIBE_SESSION) headers['X-App-Session'] = 'Bearer ' + VIBE_SESSION;
+    if (adminPass()) headers['X-Admin-Pass'] = adminPass();
+    const res = await fetch('/api' + path, { credentials: 'include', headers });
+    if (!res.ok) { let m = 'Ошибка ' + res.status; try { m = (await res.json()).error || m; } catch {} throw new Error(m); }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) { toast('Не удалось получить PDF: ' + e.message, true); }
 }
-window.invoicePdf = invoicePdf;
+async function invoicePdf(id) { return openPdf('/billing/invoice/' + id + '/pdf'); }
+async function actPdf(id) { return openPdf('/billing/invoice/' + id + '/act.pdf'); }
+window.invoicePdf = invoicePdf; window.actPdf = actPdf;
 async function payInv(id) { if (!confirm('Отметить счёт оплаченным? Баланс пополнится.')) return; await api('POST', `/billing/invoice/${id}/pay`); toast('Оплачен, баланс пополнен'); openTab('billing'); }
 async function cancelInv(id) { if (!confirm('Отменить счёт?')) return; await api('POST', `/billing/invoice/${id}/cancel`); toast('Отменён'); openTab('billing'); }
 window.payInv = payInv; window.cancelInv = cancelInv;

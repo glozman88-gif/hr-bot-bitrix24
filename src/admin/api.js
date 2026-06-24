@@ -6,7 +6,7 @@ import { runHHSync, getLastHHRun } from '../hh/scheduler.js';
 import { fetchAvitoItemDescription } from '../avito/parser.js';
 import { vibeGet, vibePost } from '../vibe.js';
 import { config } from '../config.js';
-import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer, getTransactionsFiltered } from '../billing.js';
+import { getBillingState, topupTokens, createInvoice, payInvoice, cancelInvoice, setBillingSettings, getAccount, tokensToRub, generateInvoicePdfBuffer, generateActPdfBuffer, getTransactionsFiltered } from '../billing.js';
 import { runTbankSync, getTbankStatus } from '../billing/tbank.js';
 
 export const adminRouter = Router();
@@ -346,6 +346,15 @@ adminRouter.get('/billing/invoice/:id/pdf', wrap(async (req, res) => {
   res.set('Content-Type', 'application/pdf');
   res.set('Content-Disposition', `inline; filename="invoice-${req.params.id}.pdf"`);
   res.send(buf);
+}));
+// Закрывающий акт (только для оплаченного счёта) — доступен и клиенту.
+adminRouter.get('/billing/invoice/:id/act.pdf', wrap(async (req, res) => {
+  try {
+    const buf = await generateActPdfBuffer(Number(req.params.id));
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="act-${req.params.id}.pdf"`);
+    res.send(buf);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 }));
 adminRouter.post('/billing/invoice/:id/pay', requireAdmin, wrap(async (req, res) => {
   res.json({ ok: true, invoice: await payInvoice(Number(req.params.id)) });
