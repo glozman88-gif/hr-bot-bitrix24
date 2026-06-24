@@ -27,7 +27,7 @@ const BRAND_DARK = '#152c4d'; // тёмно-синий акцент
 // Российский QR для платежа — формат ST00012 (ГОСТ Р 56042-2014).
 function makePaymentQrPayload(recipient, invoice) {
   const sumKop = Math.round((invoice.amountRub || 0) * 100);
-  const purpose = `Пополнение баланса по счету N ${invoice.number} от ${formatDate(invoice.date)}. ИНН плательщика ${invoice.payerInn || ''}. Без НДС.`;
+  const purpose = `Оплата услуг по разработке, настройке и поддержке программного обеспечения по счёту N ${invoice.number} от ${formatDate(invoice.date)}. ИНН плательщика ${invoice.payerInn || ''}. Без НДС.`;
   // Только латиница в полях | разделяет; внутри значения кириллица допустима в UTF-8.
   const fields = {
     Name: recipient.fullName,
@@ -141,7 +141,7 @@ async function generateInvoicePdf({ recipient, invoice }) {
       cx = left;
       const cells = [
         ['1',                                                                                colW.idx,   'center'],
-        ['Услуги по поддержке работы приложения', colW.name, 'left'],
+        ['Услуги по разработке, настройке и поддержке программного обеспечения', colW.name, 'left'],
         ['1',                                                                                colW.qty,   'center'],
         [totalSum,                                                                           colW.price, 'right'],
         [totalSum,                                                                           colW.sum,   'right'],

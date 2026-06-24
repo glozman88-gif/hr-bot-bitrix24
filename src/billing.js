@@ -124,7 +124,7 @@ export async function generateActPdfBuffer(id) {
       date: inv.paid_at || inv.created_at,
       customer: { name: inv.payer_name || '', inn: inv.payer_inn || '' },
       items: [{
-        name: 'Услуги по поддержке работы приложения',
+        name: 'Услуги по разработке, настройке и поддержке программного обеспечения',
         qty: 1, price: amount, sum: amount,
       }],
       total: amount,
