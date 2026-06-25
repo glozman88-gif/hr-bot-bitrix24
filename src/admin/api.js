@@ -375,13 +375,15 @@ adminRouter.put('/billing/settings', requireAdmin, wrap(async (req, res) => {
 
 // ── Расход токенов ──
 adminRouter.get('/usage', wrap(async (req, res) => {
+  const s = await getSettings();
+  const resetAt = s.usage_reset_at || null;          // считаем с точки сброса
   const totals = await query(
     `SELECT COALESCE(SUM(total_tokens),0)::int AS total,
             COALESCE(SUM(prompt_tokens),0)::int AS prompt,
             COALESCE(SUM(completion_tokens),0)::int AS completion,
             COUNT(*)::int AS calls,
             COUNT(DISTINCT dialog_id)::int AS dialogs
-     FROM token_usage`
+     FROM token_usage WHERE ($1::timestamptz IS NULL OR created_at >= $1)`, [resetAt]
   );
   const perDialog = await query(
     `SELECT dialog_id,
@@ -390,7 +392,8 @@ adminRouter.get('/usage', wrap(async (req, res) => {
             SUM(prompt_tokens)::int AS prompt_tokens,
             SUM(completion_tokens)::int AS completion_tokens,
             MAX(created_at) AS last_at
-     FROM token_usage GROUP BY dialog_id ORDER BY MAX(created_at) DESC LIMIT 200`
+     FROM token_usage WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+     GROUP BY dialog_id ORDER BY MAX(created_at) DESC LIMIT 200`, [resetAt]
   );
   const t = totals.rows[0];
   const avgPerDialog = t.dialogs ? Math.round(t.total / t.dialogs) : 0;
@@ -399,12 +402,19 @@ adminRouter.get('/usage', wrap(async (req, res) => {
   const price = Number(acc?.token_price_rub || 0);
   res.json({
     totals: t, avgPerDialog, avgPerCall,
-    pricePer1k: price,
+    pricePer1k: price, resetAt,
     avgPerDialogRub: tokensToRub(avgPerDialog, price),
     avgPerCallRub: tokensToRub(avgPerCall, price),
     totalRub: tokensToRub(t.total, price),
     perDialog: perDialog.rows,
   });
+}));
+
+// Сброс счётчиков токенов: статистика начинает считаться с момента сброса (данные не удаляются).
+adminRouter.post('/usage/reset', requireAdmin, wrap(async (req, res) => {
+  await query('UPDATE settings SET usage_reset_at = now() WHERE id=1');
+  const s = await getSettings();
+  res.json({ ok: true, resetAt: s.usage_reset_at });
 }));
 
 // ── Дашборд: краткая статистика ──

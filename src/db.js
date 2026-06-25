@@ -231,6 +231,7 @@ ALTER TABLE job_positions ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEF
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS age TEXT;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS citizenship TEXT;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS work_duration TEXT;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS usage_reset_at TIMESTAMPTZ;
 `;
 
 export async function migrate() {
@@ -238,6 +239,13 @@ export async function migrate() {
   await pool.query(ALTERS);
   // Тариф по умолчанию: 1 ₽ за 1000 токенов (10 млн токенов = 10 000 ₽).
   await pool.query("UPDATE billing_account SET token_price_rub=1.0 WHERE id=1 AND token_price_rub=0")
+  // Точка сброса счётчиков токенов из env (применяется один раз, двигается только вперёд).
+  if (process.env.USAGE_RESET) {
+    await pool.query(
+      "UPDATE settings SET usage_reset_at=$1 WHERE id=1 AND (usage_reset_at IS NULL OR usage_reset_at < $1)",
+      [process.env.USAGE_RESET]
+    );
+  }
   // Заполняем job_positions если пусто
   const { rowCount } = await pool.query('SELECT 1 FROM job_positions LIMIT 1');
   if (rowCount === 0) {

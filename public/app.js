@@ -559,7 +559,13 @@ window.showDialog = showDialog;
 registerTab('usage', async () => {
   const u = await api('GET', '/usage');
   const t = u.totals;
+  const isAdmin = !!adminPass();
   view().innerHTML = `
+    <div class="toolbar">
+      <span class="hint">${u.resetAt ? 'Счёт ведётся с ' + new Date(u.resetAt).toLocaleString('ru') : 'Счёт ведётся за всё время'}</span>
+      <div class="right"></div>
+      ${isAdmin ? '<button class="btn danger sm" id="u_reset">Сбросить счётчики</button>' : ''}
+    </div>
     <div class="stat-grid">
       <div class="stat"><div class="n">${t.total.toLocaleString('ru')}</div><div class="l">токенов всего</div></div>
       <div class="stat"><div class="n">${u.avgPerDialog.toLocaleString('ru')}</div><div class="l">токенов на диалог (ср.)</div></div>
@@ -581,6 +587,13 @@ registerTab('usage', async () => {
         <td class="nowrap">${d.last_at ? new Date(d.last_at).toLocaleString('ru') : ''}</td>
       </tr>`).join('')}</tbody></table>` : '<p class="muted">Пока нет данных — токены появятся после первых диалогов с ботом.</p>'}
     </div>`;
+  if (isAdmin) {
+    const rb = $('#u_reset');
+    if (rb) rb.onclick = async () => {
+      if (!confirm('Сбросить счётчики токенов? Статистика начнёт считаться заново с текущего момента (история не удаляется).')) return;
+      try { await api('POST', '/usage/reset', {}); toast('Счётчики сброшены'); openTab('usage'); } catch (e) { toast(e.message, true); }
+    };
+  }
 });
 
 // ───────── Billing (Баланс / Выписка / Счета) ─────────

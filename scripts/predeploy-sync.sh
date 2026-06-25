@@ -38,7 +38,8 @@ curl -s -X POST "$BASE/infra/servers/$SERVER_ID/exec" -H "X-Api-Key: $VIBE_API_K
 echo "  ИЗМЕНЕНЫ (отличается хэш):"
 join -j2 <(sort -k2 /tmp/local_rel.txt) <(sort -k2 /tmp/server_rel.txt) | awk '$2!=$3{print "    "$1}'
 echo "  ТОЛЬКО НА СЕРВЕРЕ (чужие новые файлы — НЕ ЗАТЕРЕТЬ!):"
-comm -13 <(awk '{print $2}' /tmp/local_rel.txt|sort) <(awk '{print $2}' /tmp/server_rel.txt|sort) | sed 's/^/    /'
+SERVER_ONLY=$(comm -13 <(awk '{print $2}' /tmp/local_rel.txt|sort) <(awk '{print $2}' /tmp/server_rel.txt|sort))
+echo "$SERVER_ONLY" | sed 's/^/    /'
 echo "  ТОЛЬКО ЛОКАЛЬНО (ваши новые файлы):"
 comm -23 <(awk '{print $2}' /tmp/local_rel.txt|sort) <(awk '{print $2}' /tmp/server_rel.txt|sort) | sed 's/^/    /'
 
@@ -52,4 +53,10 @@ if [ "$1" = "--pull" ]; then
   rm -rf /tmp/server-app && mkdir -p /tmp/server-app && tar xzf /tmp/server-app.tgz -C /tmp/server-app
   echo "  готово: /tmp/server-app  (сравните: diff -r /tmp/server-app <локальные>)"
 fi
-echo "== ИТОГ: при наличии 'ТОЛЬКО НА СЕРВЕРЕ' или 'ИЗМЕНЕНЫ' — синхронизируйте перед деплоем =="
+echo "== ИТОГ =="
+if [ -n "$SERVER_ONLY" ]; then
+  echo "  ❌ СТОП: на сервере есть файлы, которых нет локально (чужая работа)."
+  echo "     Запустите: bash scripts/predeploy-sync.sh --pull, слейте изменения, и только потом деплойте."
+  exit 1
+fi
+echo "  ✅ Чужих новых файлов нет. 'ИЗМЕНЕНЫ' = ваши локальные правки (это норма перед деплоем)."
